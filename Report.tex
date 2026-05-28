@@ -2,7 +2,7 @@
 \usepackage[toc,page]{appendix}
 \usepackage{amsmath, amssymb} % Math Packages
 \usepackage{geometry}
-\usepackage[hidelinks]{hyperref} % Clickable links
+\usepackage{hyperref} % Clickable links
 \usepackage{graphicx, float} % Image Packages
 \graphicspath{{/home/tyler/Pictures/}} % Path to image folder
 \geometry{margin=2cm}
@@ -24,6 +24,7 @@
 \usepackage[scaled=0.95]{inconsolata}
 \usepackage{minted}
 \usemintedstyle{emacs}
+\usepackage{forest}
 
 
 
@@ -39,16 +40,163 @@ Tyler Robards - 651790, Baley Eccles 652137}\\
 \section{Introduction}
 
 \section{Technical Detail}
+\subsection{Design Overview}
+The processor was designed as a single-cycle RV32I datapath. In a single-cycle design, each instruction completes in one clock cycle. This means that instruction, fetch, decode, register access, ALU execution, memory access, write-back and program counter update all occur during one clock period. This causes the maximum clock speed to be limited by the longest combinational path through the processor.\\
+\bigskip
+The top-level module is \texttt{riscv\_cpu.v}. This module connects the program counter, instruction memory, control unit, register file, immediate generator, ALU control, ALU, data memory, write-back multiplexer and next-PC logic. The supported instruction set includes R-type arithmetic instruction, I-type immediate arithmetic and load instructions, S-type store instructions, B-type branch instructions and J-type jump instructions.
+
+\subsection{Datapath Block Diagram}
+
+
+\subsection{Module Hierarchy}
+The CPU uses a top-down module structure. The \texttt{riscv\_cpu} module is the top-level design and instantiates all of the main datapath modules. The test bench instantiates \texttt{riscv\_cpu} as the unit under test.
+\begin{figure}[h]
+    \centering
+    \begin{forest}
+        for tree={
+            font=\ttfamily,
+            grow'=0,
+            child anchor=west,
+            parent anchor=south,
+            anchor=west,
+            calign=first,
+            edge path={
+                \noexpand\path [draw, \forestoption{edge}]
+                (!u.south west) +(7pt,0) |- (.child anchor)\forestoption{edge label};
+            },
+            before typesetting nodes={
+                if n=1
+                    {insert before={[,phantom]}}
+                    {}
+            },
+            fit=band,
+            before computing xy={l=18pt},
+        }
+        [tb\_riscv\_cpu
+            [riscv\_cpu
+                [instruction\_mem]
+                [control\_unit]
+                [register\_file]
+                [imm\_gen]
+                [alu\_control]
+                [alu]
+                [data\_mem]
+            ]
+        ]
+    \end{forest}
+    \caption{RISC-V CPU module hierarchy.}
+    \label{fig:riscv_module_hierarchy}
+\end{figure}
+\begin{verbatim}
+
+\end{verbatim}
+
+
+\subsection{Module Descriptions}
+\texttt{riscv\_cpu.v}\\
+The \texttt{riscv\_cpu} module is the top-level module. It contains the 32-bit program counter and connects all of the supporting datapath modules. The current program counter value is used to read an instruction from instruction memory. The instruction is then split into the opcode, destination register, source registers, \texttt{funct3} and \texttt{funct7} fields. The fields are used by the control unit and ALU control logic to determine the operation required for the current instruction.\\
+\bigskip
+The CPU also contains the write-back and next-PC selection logic. For normal ALU instruction, the write-back data is the ALU result. For \texttt{lw} the write-back data comes from data memory. Fro \texttt{jal}, the destination register receives \texttt{PC + 4}, the branch target, or the jump target depending on the branch and jump control signals.\\
+\bigskip
+\texttt{control\_unit.v}\\
+The control unit decodes the 7-bit opcode and generates the main datapath and control signals. These include \texttt{reg\_write}, \texttt{mem\_write}, \texttt{mem\_read}, \texttt{alu\_src}, \texttt{mem\_to\_reg}, \texttt{branch}, \texttt{jump} and \texttt{alu\_op}. For example, R-type instructions enable register write-back and use the two register operands as ALU inputs. Load instructions enable memory reading, select the immediate as the second ALU input and select memory data for write-back. Store instructions enable memory writing, while branch and jump instructions control the next-PC path.\\
+\bigskip
+\texttt{alu\_control.v}\\
+The ALU control module converts the higher-level \texttt{alu\_op} signal and instruction function fields into the specific ALU operation. For this project, only addition and subtraction were required. Addition is used for \texttt{add}, \texttt{addi}, \texttt{lw} and \texttt{sw}, while subtraction is used for \texttt{sub} and \texttt{beq}. For R-type instructions, the module checks the combined \texttt{funct7} and \texttt{funct3} fields to distinguish between \texttt{add} and \texttt{sub}.\\
+\bigskip
+\texttt{alu.v}
+The ALU performs 32-bit addition or subtraction depending on the ALU control signal. It also produces a \texttt{zero} flag when the ALU result is equal to zero. This flag is used by the branch logic for \texttt{beq}. When two operands are equal, subtracting them gives zero, causing the branch condition to be true.\\
+\bigskip
+\texttt{register\_file.v}\\
+The register file contains 32 general-purpose 32-bit registers. It has two asynchronous read ports for \texttt{rs1} and \texttt{rs2} and one synchronous write port for \texttt{rd}. The register file is reset to zero at the start of simulation. Register \texttt{x0} is forced to remain zero, matching the RISC-V specification.\\
+\bigskip
+\texttt{imm\_gen.v}\\
+The immediate generator extracts and sign-extends immediate values from the instruction word. It supports the immediate formats required for the project: I-type for \texttt{addi} and \texttt{lw}, S-type for \texttt{sw}, B-type for \texttt{beq} and J-type for \texttt{jal}. Branch and jump immediates include a final zero bit because their target offsets are aligned to two-byte boundaries.\\
+\bigskip
+\texttt{instruction\_mem.v}\\
+The instruction memory stores the assembled program from \texttt{program.hex}. It contains 256 32-bit words and uses word-aligned addressing by dividing the byte address by four. At simulation start \texttt{\$readmeh} loads the hexadecimal machine code into the memory array.\\
+\bigskip
+\texttt{data\_mem.v}\\
+The data memory contains 256 32-bit words. It support synchronous writes and asynchronous reads. The address is word-aligned using \texttt{addr[31:2]}, which allows load and store instructions to access word locations using byte addresses from the ALU.\\
+\bigskip
+\texttt{tb\_riscv\_cpu.v}\\
+The test bench generates a 100 MHz simulation clock with a 10 ns period. It applies reset, runs the CPU for enough time to execute the test program and then displays the contents of the registers and data memory. This allows the final register and memory values to be checked against the expected results from the assembly program.
+
+\subsection{Supported Instruction Behaviour}
+\begin{table}[h!]
+\centering
+\caption{Supported RISC-V instructions in the implemented processor}
+\label{tab:supported-instructions}
+\begin{tabularx}{\textwidth}{lllX}
+\toprule
+\textbf{Instruction} & \textbf{Type} & \textbf{} & \textbf{Main behaviour in this design} \\
+\midrule
+\texttt{add}  & R-type & & Adds two register operands and writes the result to \texttt{rd}. \\
+
+\texttt{sub}  & R-type & & Subtracts \texttt{rs2} from \texttt{rs1} and writes the result to \texttt{rd}. \\
+
+\texttt{addi} & I-type & & Adds a sign-extended immediate to \texttt{rs1} and writes the result to \texttt{rd}. \\
+
+\texttt{lw}   & I-type load & & Uses the ALU to calculate an address, reads data memory, and writes the loaded value to \texttt{rd}. \\
+
+\texttt{sw}   & S-type store & & Uses the ALU to calculate an address and stores \texttt{rs2} into data memory. \\
+
+\texttt{beq}  & B-type branch & & Subtracts the two register operands and branches when the result is zero. \\
+
+\texttt{jal}  & J-type jump & & Jumps to the target address and writes \texttt{PC + 4} to \texttt{rd}. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{FPGA Resource and Performance Considerations}
+The design is small compared with the resources available on the Basys 3 development board. The main hardware resources used by this processor are flip-flops for the program counter and register file, LUTs for the control logic, multiplexers, immediate generation, ALU logic and data memory resources for instruction and data memory. The instruction memory and data memory are each implemented as 256 words of 32 bits, giving 8192 bits each. Together, they require 16384 bits, not including the register file. This is well within the block RAM capacity of the Basys 3 Artix-7 FPGA.\\
+The processor has a CPI of 1 because it is a single-cycle design. With the 100 MHz test bench clock, the simulated clock period is 10 ns, so the ideal instruction throughput is one instruction every 10 ns. However, for the real FPGA implementation, the maximum clock frequency would depend on the longest combinational path. The likely critical path is from the program counter through instruction memory. decode/control, register file and immediate generation, the ALU, possible data memory access, write-back selection and into the destination register. Because all instruction work must complete within one cycle, a single-cycle CPU is generally slower than a pipelined design for more complex instruction sets.\\
+For this small instruction subset, the Basys 3 FPGA is suitable. The design does not use multiplication, division, floating-point operations, caches, or complex peripherals, so it should require only a small fraction of the available LUTs, flip-flops and memory resources. If implemented on the board, the main practical limitations would be timing closure at the selected clock frequency, memory inference style and any additional input/output hardware added around the CPU.
 
 \section{Testing}
+\subsection{Test Programme}
+A RISC-V assembly test program was written to check all required instructions. The programme first loads two immediate values into registers, then performs addition and subtraction. It stores the result of the addition into data memory, loads it back into another register, checks equality using \texttt{beq} and finally checks jump behaviour using \texttt{jal}. The expected results can be seen in Table \ref{tab:instruction-tests}.\\
+
+\begin{table}[h!]
+\centering
+\caption{Instruction test cases and expected results}
+\label{tab:instruction-tests}
+\renewcommand{\arraystretch}{1.25}
+\begin{tabularx}{\textwidth}{llX}
+\toprule
+\textbf{Instruction tested} & \textbf{Test method} & \textbf{Expected result} \\
+\midrule
+\texttt{addi} & Load constants 5 and 10 into registers. 
+& \texttt{x1 = 5}, \texttt{x2 = 10}. \\
+
+\texttt{add} & Add \texttt{x1} and \texttt{x2}. 
+& \texttt{x3 = 15}. \\
+
+\texttt{sub} & Subtract \texttt{x1} from \texttt{x2}. 
+& \texttt{x4 = 5}. \\
+
+\texttt{sw} & Store \texttt{x3} into data memory address 0. 
+& \texttt{memory[0] = 15}. \\
+
+\texttt{lw} & Load data memory address 0 into \texttt{x5}. 
+& \texttt{x5 = 15}. \\
+
+\texttt{beq} & Compare \texttt{x3} and \texttt{x5}. 
+& Branch is taken because both are 15. \\
+
+\texttt{jal} & Jump to \texttt{jump\_target} and store return address. 
+& \texttt{x7 = PC + 4}; skipped instruction does not execute. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Test Bench Method}
+
+\subsection{Simulation Results}
 
 \section{Conclusion}
 
 \section{Code Listings}
 
-\vfill
-\hrule
-\begin{center}
-\textit{END OF ASSIGNMENT}
-\end{center}
+
 \end{document}
